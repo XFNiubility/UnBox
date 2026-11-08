@@ -13,48 +13,86 @@ import (
 	"github.com/unbox/unbox/internal/provider"
 )
 
+// FlexString 兼容 string 与 JSON 值两种形态：JSON 的值直接取字符串，
+// 对象/数组则序列化成紧凑 JSON 字符串（如 POST请求数据 可写成
+// {"sk":"{wd}","offset":0}，反序列化后仍是 JSON 字符串，供 Search 拼请求体）。
+type FlexString string
+
+// UnmarshalJSON 实现 string / object / array 三态兼容。
+func (f *FlexString) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*f = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexString(s)
+		return nil
+	}
+	var raw json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	// 对象/数组：重序列化成紧凑 JSON（map 遍历无序，但对请求体语义无影响）。
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	*f = FlexString(b)
+	return nil
+}
+
 // XYQ 是 XYQHiker 规则文件的字段子集。字段名保持规则文件的中文键。
 // 所有字段可选；缺失时对应能力返回空结果而非报错。
 type XYQ struct {
-	HomeURL         string    `json:"首页推荐链接"`
-	CategoryNames   string    `json:"分类名称"`
-	CategoryIDs     string    `json:"分类名称替换词"`
-	CategoryURL     string    `json:"分类链接"`
-	CategoryArray   string    `json:"分类列表数组规则"`
-	CatTitle        string    `json:"分类片单标题"`
-	CatLink         string    `json:"分类片单链接"`
-	CatPic          string    `json:"分类片单图片"`
-	CatSubtitle     string    `json:"分类片单副标题"`
-	LinkPrefix      string    `json:"分类片单链接加前缀"`
-	LinkSuffix      string    `json:"分类片单链接加后缀"`
-	SearchURL       string    `json:"搜索链接"`
-	PostBody        string    `json:"POST请求数据"`
-	SearchModeJSON  string    `json:"搜索截取模式"` // "0" = JSON 响应
-	SearchArray     string    `json:"搜索列表数组规则"`
-	SearchTitle     string    `json:"搜索片单标题"`
-	SearchLink      string    `json:"搜索片单链接"`
-	SearchPic       string    `json:"搜索片单图片"`
-	SearchSubtitle  string    `json:"搜索片单副标题"`
-	SearchPrefix    string    `json:"搜索片单链接加前缀"`
-	SearchSuffix    string    `json:"搜索片单链接加后缀"`
-	SearchHeaders   HeaderMap `json:"搜索请求头参数"`
-	Actor           string    `json:"演员详情"`
-	Content         string    `json:"简介详情"`
-	DetailMode      string    `json:"详情是否Jsoup写法"` // "是"/"1" = JSoup；否则标记截取/XPath
-	PlayerTabArray  string    `json:"线路列表数组规则"`
-	PlayerTabTitle  string    `json:"线路标题"`
-	PlayerListArray string    `json:"播放列表数组规则"`
-	PlayArray       string    `json:"选集列表数组规则"`
-	PlayTitle       string    `json:"选集标题"`
-	PlayLink        string    `json:"选集链接"`
-	PlayPrefix      string    `json:"选集链接加前缀"`
-	PlaySuffix      string    `json:"选集链接加后缀"`
-	Reverse         string    `json:"是否反转选集序列"`
-	DirectPlay      string    `json:"链接是否直接播放"`
-	SniffEnabled    string    `json:"是否开启手动嗅探"`
-	SniffKeys       string    `json:"手动嗅探视频链接关键词"`
-	SniffFilters    string    `json:"手动嗅探视频链接过滤词"`
-	Headers         HeaderMap `json:"请求头参数"`
+	HomeURL         string     `json:"首页推荐链接"`
+	CategoryNames   string     `json:"分类名称"`
+	CategoryIDs     string     `json:"分类名称替换词"`
+	CategoryURL     string     `json:"分类链接"`
+	CategoryArray   string     `json:"分类列表数组规则"`
+	CatTitle        string     `json:"分类片单标题"`
+	CatLink         string     `json:"分类片单链接"`
+	CatPic          string     `json:"分类片单图片"`
+	CatSubtitle     string     `json:"分类片单副标题"`
+	LinkPrefix      string     `json:"分类片单链接加前缀"`
+	LinkSuffix      string     `json:"分类片单链接加后缀"`
+	SearchURL       string     `json:"搜索链接"`
+	PostBody        FlexString `json:"POST请求数据"`
+	SearchModeJSON  string     `json:"搜索截取模式"` // "0" = JSON 响应
+	SearchArray     string     `json:"搜索列表数组规则"`
+	SearchTitle     string     `json:"搜索片单标题"`
+	SearchLink      string     `json:"搜索片单链接"`
+	SearchPic       string     `json:"搜索片单图片"`
+	SearchSubtitle  string     `json:"搜索片单副标题"`
+	SearchPrefix    string     `json:"搜索片单链接加前缀"`
+	SearchSuffix    string     `json:"搜索片单链接加后缀"`
+	SearchHeaders   HeaderMap  `json:"搜索请求头参数"`
+	TypeDetail      string     `json:"类型详情"`
+	YearDetail      string     `json:"年代详情"`
+	AreaDetail      string     `json:"地区详情"`
+	DirectorDetail  string     `json:"导演详情"`
+	Actor           string     `json:"演员详情"`
+	Content         string     `json:"简介详情"`
+	DetailMode      string     `json:"详情是否Jsoup写法"` // "是"/"1" = JSoup；否则标记截取/XPath
+	PlayerTabArray  string     `json:"线路列表数组规则"`
+	PlayerTabTitle  string     `json:"线路标题"`
+	PlayerListArray string     `json:"播放列表数组规则"`
+	PlayArray       string     `json:"选集列表数组规则"`
+	PlayTitle       string     `json:"选集标题"`
+	PlayLink        string     `json:"选集链接"`
+	PlayPrefix      string     `json:"选集链接加前缀"`
+	PlaySuffix      string     `json:"选集链接加后缀"`
+	Reverse         string     `json:"是否反转选集序列"`
+	DirectPlay      string     `json:"链接是否直接播放"`
+	SniffEnabled    string     `json:"是否开启手动嗅探"`
+	SniffKeys       string     `json:"手动嗅探视频链接关键词"`
+	SniffFilters    string     `json:"手动嗅探视频链接过滤词"`
+	Headers         HeaderMap  `json:"请求头参数"`
 }
 
 // ParseXYQ 解析规则 JSON；规则是 JSONC（可能含 // 注释），先剥离注释。
@@ -157,7 +195,7 @@ func (e *XYQHikerEngine) Search(ctx context.Context, q string) ([]provider.Item,
 	}
 	// 搜索链接可能以 ";post"/";get" 结尾声明方法（如 yingso 的 .../search;post）。
 	target, forcePost := splitMethodSuffix(xyqReplaceSearch(e.rule.SearchURL, q))
-	body := strings.NewReplacer("{wd}", q).Replace(e.rule.PostBody)
+	body := strings.NewReplacer("{wd}", q).Replace(string(e.rule.PostBody))
 	usePost := forcePost || strings.TrimSpace(body) != ""
 
 	var raw string
@@ -205,11 +243,21 @@ func (e *XYQHikerEngine) Detail(ctx context.Context, id string) (Vod, error) {
 	doc := e.newDoc(raw)
 	name := firstNonEmpty(h1Text(raw), titleTag(raw))
 	pic := ""
-	if img := doc.Find(".module-item-pic img").First(); img.Length() > 0 {
-		if src, ok := img.Attr("data-src"); ok {
-			pic = src
-		} else if src, ok = img.Attr("src"); ok {
-			pic = src
+	// 详情页海报优先按「分类片单图片」规则在整页提取（真实 XYQHiker 站点的
+	// 详情页复用列表图片字段，如去看吧动漫的 ".fed-list-pics&&data-original"），
+	// 而不是硬编码某个站点特有结构。
+	if strings.TrimSpace(e.rule.CatPic) != "" {
+		if vals := jsoupExtractFirst(doc, e.rule.CatPic); len(vals) > 0 && vals[0] != "" {
+			pic = vals[0]
+		}
+	}
+	if pic == "" {
+		if img := doc.Find(".module-item-pic img").First(); img.Length() > 0 {
+			if src, ok := img.Attr("data-src"); ok {
+				pic = src
+			} else if src, ok = img.Attr("src"); ok {
+				pic = src
+			}
 		}
 	}
 	if pic == "" {
@@ -219,10 +267,13 @@ func (e *XYQHikerEngine) Detail(ctx context.Context, id string) (Vod, error) {
 		pic = e.absURL(pic)
 	}
 	v := Vod{
-		ID:      id,
-		Name:    name,
-		Pic:     pic,
-		Content: e.extractDetail(raw, e.rule.Content),
+		ID:       id,
+		Name:     name,
+		Pic:      pic,
+		TypeName: e.extractDetail(raw, e.rule.TypeDetail),
+		Year:     e.extractDetail(raw, e.rule.YearDetail),
+		Area:     e.extractDetail(raw, e.rule.AreaDetail),
+		Content:  e.extractDetail(raw, e.rule.Content),
 	}
 	actor := e.extractDetail(raw, e.rule.Actor)
 	_ = actor // 演员信息保留在 Content 之外（Vod 无此字段，留待接入）
@@ -244,11 +295,10 @@ func (e *XYQHikerEngine) Detail(ctx context.Context, id string) (Vod, error) {
 			if name == "" || href == "" || isNonPlayableHref(href) {
 				continue
 			}
-			href = e.rule.PlayPrefix + href + e.rule.PlaySuffix
-			href = e.absURL(href)
+			href = e.absURL(withPrefixSuffix(href, e.rule.PlayPrefix, e.rule.PlaySuffix))
 			eps = append(eps, name+"$"+href)
 		}
-		if strings.EqualFold(e.rule.Reverse, "是") {
+		if xyqReverseEnabled(e.rule.Reverse) {
 			reverseStrings(eps)
 		}
 		if len(eps) > 0 {
@@ -277,6 +327,10 @@ func (e *XYQHikerEngine) Resolve(ctx context.Context, epURL string) (player.Stre
 				realURL = u
 			} else if u := findMediaURL(page); u != "" {
 				realURL = u
+			} else if u := macPlayerURL(page); u != "" {
+				realURL = u
+			} else if from := cipherCloudFrom(page); from != "" {
+				return player.Stream{}, fmt.Errorf("该线路为加密云播源（%s），真实地址由第三方解析+混淆脚本运行时生成，UnBox 无法直接播放", from)
 			}
 		}
 	}
@@ -285,6 +339,78 @@ func (e *XYQHikerEngine) Resolve(ctx context.Context, epURL string) (player.Stre
 		Kind:    player.KindForURL(realURL),
 		Headers: map[string]string{"User-Agent": tvboxUA, "Referer": originOf(e.rule.HomeURL)},
 	}, nil
+}
+
+// cipherCloudFrom 判断播放页是否为「url 密文 + 云播源」的加密链路。
+// dev云播（vxdev）、vx云播（xgvxcd）等 player_aaaa.url 是密文，靠第三方
+// 云解析（yun.92cj.com 等）+ 混淆 JS 换取真实 m3u8。能识别出 from 时返回
+// 源名（以给出明确报错），否则返回空串。
+func cipherCloudFrom(page string) string {
+	// 只认 MacPlayer 播放器里的 url 字段，避免误配普通页面 JSON。
+	u := macPlayerField(page, "url")
+	if u == "" {
+		return ""
+	}
+	// 明文 http(s) 地址交给上层 macPlayerURL 处理，不是密文链路。
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return ""
+	}
+	return macPlayerField(page, "from")
+}
+
+// macPlayerField 提取 MacPlayer 播放器变量（player_aaaa）里的字段值。
+// 播放器 JSON 用 {\"flag\":\"play\",\"url\":\"...\",\"from\":\"vxdev\"...}
+// 结构，值可能带 \\/ 转义。定位 field\\":\\" 之后到下一个 \\" 为止。
+func macPlayerField(page, field string) string {
+	marker := `"` + field + `":"`
+	i := strings.Index(page, marker)
+	if i < 0 {
+		return ""
+	}
+	start := i + len(marker)
+	rest := page[start:minInt(len(page), start+1024)]
+	var b strings.Builder
+	for j := 0; j < len(rest); j++ {
+		if rest[j] == '"' {
+			break
+		}
+		if rest[j] == '\\' && j+1 < len(rest) {
+			b.WriteByte(rest[j+1])
+			j++
+			continue
+		}
+		b.WriteByte(rest[j])
+	}
+	return b.String()
+}
+
+// macPlayerURL 解析 MacPlayer 播放页（var player_aaaa={"url":"https:\/\/...m3u8"} 等）
+// 里的真实媒体地址。MacPlayer 的 url 值带 \/ 转义，直接正则匹配不到，
+// 先解码 JS 转义再按媒体扩展名找第一处地址。
+func macPlayerURL(page string) string {
+	// 先定位播放器变量整体（playerXXXX={"…" 到其后的 "url":"…"}），
+	// 避免误配普通 JSON。
+	i := strings.Index(page, `"url":"`)
+	if i < 0 {
+		return ""
+	}
+	// 从该位置的 url 值里解码转义后再匹配媒体地址。
+	rest := page[i+len(`"url":"`) : minInt(len(page), i+len(`"url":"`)+2048)]
+	for _, esc := range []struct{ a, b string }{
+		{`\/`, "/"}, {`\"`, `"`}, {`\\`, `\`}, {`\n`, "\n"},
+	} {
+		rest = strings.ReplaceAll(rest, esc.a, esc.b)
+	}
+	return mediaURLRe.FindString(rest)
+}
+
+// minInt 返回两整数较小者（供 macPlayerURL 截断用）。
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // parseHTMLItems 解析一个 HTML 列表（分类首页与搜索共用）。
@@ -307,10 +433,10 @@ func (e *XYQHikerEngine) parseHTMLItems(doc *goquery.Document, kind, array, titl
 		logo := e.extractOn(node, pic)
 		sub := e.extractOn(node, subtitle)
 		if logo != "" {
-			logo = e.absURL(prefix + logo + suffix)
+			logo = e.absURL(withPrefixSuffix(logo, prefix, suffix))
 		}
 		out = append(out, provider.Item{
-			ID:    e.absURL(prefix + href + suffix),
+			ID:    e.absURL(withPrefixSuffix(href, prefix, suffix)),
 			Title: name,
 			Logo:  logo,
 			Group: sub,
@@ -350,9 +476,9 @@ func (e *XYQHikerEngine) parseJSONItems(raw string) ([]provider.Item, error) {
 			continue
 		}
 		item := provider.Item{
-			ID:    e.absURL(e.rule.SearchPrefix + href + e.rule.SearchSuffix),
+			ID:    e.absURL(withPrefixSuffix(href, e.rule.SearchPrefix, e.rule.SearchSuffix)),
 			Title: title,
-			Logo:  e.absURL(e.rule.SearchPrefix + jsonStr(obj[e.rule.SearchPic]) + e.rule.SearchSuffix),
+			Logo:  e.absURL(withPrefixSuffix(jsonStr(obj[e.rule.SearchPic]), e.rule.SearchPrefix, e.rule.SearchSuffix)),
 			Group: jsonStr(obj[e.rule.SearchSubtitle]),
 		}
 		if strings.TrimSpace(item.ID) == "" {
@@ -544,6 +670,33 @@ func reverseStrings(s []string) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
 		s[i], s[j] = s[j], s[i]
 	}
+}
+
+// xyqReverseEnabled 判断「是否反转选集序列」是否为真值。
+// 真实规则取值是 0/1/否/是 的混合（动漫巴士/七新影视/农民影视写 "1"），
+// 不能只认「是」——它代表页面按最新在前降序，需要翻转为升序展示。
+func xyqReverseEnabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "是", "y", "true":
+		return true
+	default:
+		return false
+	}
+}
+
+// withPrefixSuffix 给相对地址补上前缀/后缀，绝对地址原样返回。
+// 站点页里图片/链接常是相对路径（如 /d/1.html）需要前缀补全；但若是绝对
+// URL（CDN 直链），一律加前缀会拼出 "https://站https://cdn/..." 畸形地址。
+func withPrefixSuffix(raw, prefix, suffix string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return raw
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return trimmed
+	}
+	return prefix + trimmed + suffix
 }
 
 var _ Engine = (*XYQHikerEngine)(nil)
