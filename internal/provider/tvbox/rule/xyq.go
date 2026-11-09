@@ -55,6 +55,7 @@ type XYQ struct {
 	CategoryIDs     string     `json:"分类名称替换词"`
 	CategoryURL     string     `json:"分类链接"`
 	CategoryArray   string     `json:"分类列表数组规则"`
+	CategoryMode    string     `json:"分类截取模式"` // "0" = JSON 响应（与搜索截取模式同语义）
 	CatTitle        string     `json:"分类片单标题"`
 	CatLink         string     `json:"分类片单链接"`
 	CatPic          string     `json:"分类片单图片"`
@@ -183,6 +184,18 @@ func (e *XYQHikerEngine) Browse(ctx context.Context, cat string, page int) (prov
 	if err != nil {
 		return provider.Page{}, err
 	}
+	// 分类截取模式 "0"：JSON 响应，列表数组是 JSON 路径，字段是 JSON 键。
+	// （如戏曲多多 getcollabellist: list/name/ddurl/pic，此前缺失此分支导致
+	// Browse 恒为 0 项）
+	if e.rule.CategoryMode == "0" {
+		items, jerr := e.parseJSONItemsFields(raw,
+			e.rule.CategoryArray, e.rule.CatTitle, e.rule.CatLink,
+			e.rule.CatPic, e.rule.CatSubtitle, e.rule.LinkPrefix, e.rule.LinkSuffix)
+		if jerr != nil {
+			return provider.Page{}, jerr
+		}
+		return provider.Page{Items: items, Page: page, HasMore: len(items) > 0}, nil
+	}
 	items := e.parseHTMLItems(e.newDoc(raw), "分类", e.rule.CategoryArray,
 		e.rule.CatTitle, e.rule.CatLink, e.rule.CatPic, e.rule.CatSubtitle,
 		e.rule.LinkPrefix, e.rule.LinkSuffix)
@@ -236,6 +249,22 @@ func splitMethodSuffix(raw string) (url string, post bool) {
 }
 
 func (e *XYQHikerEngine) Detail(ctx context.Context, id string) (Vod, error) {
+	// 分类/搜索给出的链接可能本身就是可播放媒体（JSON 截取模式的
+	// 分类片单链接直接是 mp4/m3u8 直链，如戏曲多多 ddurl），或规则声明
+	// 链接是否直接播放=是。此时不能再去 fetch（会把整个视频下载回来，
+	// 4MB+ 直接超限报错），应直接作为可播放剧集返回。
+	if looksLikeMediaURL(id) || isDirectPlayOn(e.rule.DirectPlay) {
+		name := id
+		if i := strings.LastIndexByte(id, '/'); i >= 0 {
+			name = id[i+1:]
+		}
+		return Vod{
+			ID:       id,
+			Name:     name,
+			PlayFrom: "直连",
+			PlayURL:  name + "$" + id,
+		}, nil
+	}
 	raw, err := e.fetch(ctx, id, nil)
 	if err != nil {
 		return Vod{}, err
@@ -446,12 +475,22 @@ func (e *XYQHikerEngine) parseHTMLItems(doc *goquery.Document, kind, array, titl
 }
 
 // parseJSONItems 解析 JSON 响应（截取模式 0）。
+// parseJSONItems 解析 JSON 截取模式的搜索响应（搜索截取模式=0）。
 func (e *XYQHikerEngine) parseJSONItems(raw string) ([]provider.Item, error) {
+	return e.parseJSONItemsFields(raw,
+		e.rule.SearchArray, e.rule.SearchTitle, e.rule.SearchLink,
+		e.rule.SearchPic, e.rule.SearchSubtitle,
+		e.rule.SearchPrefix, e.rule.SearchSuffix)
+}
+
+// parseJSONItemsFields 解析 JSON 截取模式的列表响应（分类/搜索共用）。
+// 截取模式 "0" 时列表数组是 JSON 点路径，标题/链接/图片是条目里的 JSON 键。
+func (e *XYQHikerEngine) parseJSONItemsFields(raw, array, title, link, pic, subtitle, prefix, suffix string) ([]provider.Item, error) {
 	var root any
 	if err := json.Unmarshal([]byte(raw), &root); err != nil {
-		return nil, fmt.Errorf("搜索 JSON 解析失败: %w", err)
+		return nil, fmt.Errorf("JSON 列表解析失败: %w", err)
 	}
-	arr := descendJSONPath(root, e.rule.SearchArray)
+	arr := descendJSONPath(root, array)
 	if arr == nil {
 		return nil, nil
 	}
@@ -470,16 +509,16 @@ func (e *XYQHikerEngine) parseJSONItems(raw string) ([]provider.Item, error) {
 		if !ok {
 			continue
 		}
-		title := jsonStr(obj[e.rule.SearchTitle])
-		href := jsonStr(obj[e.rule.SearchLink])
+		title := jsonStr(obj[title])
+		href := jsonStr(obj[link])
 		if strings.TrimSpace(title) == "" && strings.TrimSpace(href) == "" {
 			continue
 		}
 		item := provider.Item{
-			ID:    e.absURL(withPrefixSuffix(href, e.rule.SearchPrefix, e.rule.SearchSuffix)),
+			ID:    e.absURL(withPrefixSuffix(href, prefix, suffix)),
 			Title: title,
-			Logo:  e.absURL(withPrefixSuffix(jsonStr(obj[e.rule.SearchPic]), e.rule.SearchPrefix, e.rule.SearchSuffix)),
-			Group: jsonStr(obj[e.rule.SearchSubtitle]),
+			Logo:  e.absURL(withPrefixSuffix(jsonStr(obj[pic]), prefix, suffix)),
+			Group: jsonStr(obj[subtitle]),
 		}
 		if strings.TrimSpace(item.ID) == "" {
 			item.ID = item.Title // 无链接时以标题兜底 id，仍可进详情尝试
@@ -541,6 +580,8 @@ func (e *XYQHikerEngine) extractDetail(raw string, rule string) string {
 
 // isJsoupNonNull 判断「是否Jsoup写法」类字段是否取 JSoup 语义。
 // 真值："是"/"1"/"Y/y"；否则走标记截取/XPath。空视为 JSoup（大多数规则主路径）。
+// isJsoupNonNull 判断「是否Jsoup写法」类字段是否取 JSoup 语义。
+// 真值："是"/"1"/"Y/y"；否则走标记截取/XPath。空视为 JSoup（大多数规则主路径）。
 func isJsoupNonNull(v string) bool {
 	switch strings.TrimSpace(strings.ToLower(v)) {
 	case "", "是", "1", "y":
@@ -548,6 +589,11 @@ func isJsoupNonNull(v string) bool {
 	default:
 		return false
 	}
+}
+
+// isDirectPlayOn 判断「链接是否直接播放」是否开启（规则写 是/1/y/true）。
+func isDirectPlayOn(v string) bool {
+	return xyqReverseEnabled(v)
 }
 
 func (e *XYQHikerEngine) selectNodes(doc *goquery.Document, rule string) []*goquery.Selection {
